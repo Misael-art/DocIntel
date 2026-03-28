@@ -11,10 +11,11 @@ from config.settings import (
     HEAVY_FILE_THRESHOLD_BYTES,
     I_DRIVE_CURATED_ROOT,
     MIN_FREE_BYTES_BY_DRIVE,
+    TEMP_STAGING_ROOT,
 )
 
 
-POLICY_VERSION = "2026-03-curation-v1"
+POLICY_VERSION = "2026-03-curation-v2"
 
 COLLECTIONS = {
     "PESSOAL_CRITICO": "Pessoal_Critico",
@@ -48,6 +49,13 @@ DESTINATIONS = {
         "min_free_bytes": MIN_FREE_BYTES_BY_DRIVE["F:\\"],
         "allow_execute": True,
     },
+    "L_TEMP": {
+        "label": "L:\\ Temp Staging",
+        "root": TEMP_STAGING_ROOT,
+        "logical_root": "L_TEMP://",
+        "min_free_bytes": MIN_FREE_BYTES_BY_DRIVE["L:\\"],
+        "allow_execute": TEMP_STAGING_ROOT is not None,
+    },
     "REVIEW_QUEUE": {
         "label": "Review Queue",
         "root": None,
@@ -71,6 +79,12 @@ DESTINATION_SUBDIRS = {
     ("I_DRIVE", COLLECTIONS["FERRAMENTAS_ESSENCIAIS"]): "Ferramentas_Essenciais",
     ("F_DRIVE", COLLECTIONS["ACERVO_PESADO"]): "Acervo_Pesado",
     ("F_DRIVE", COLLECTIONS["BACKUPS_ESPELHOS"]): "Backups_Espelhos",
+    ("L_TEMP", COLLECTIONS["PESSOAL_CRITICO"]): r"Stage_GoogleDrive\Pessoal_Critico",
+    ("L_TEMP", COLLECTIONS["PROJETOS_ATIVOS"]): r"Stage_I_Drive\Projetos_Ativos",
+    ("L_TEMP", COLLECTIONS["PROJETOS_LEGADO"]): r"Stage_I_Drive\Projetos_Legado",
+    ("L_TEMP", COLLECTIONS["FERRAMENTAS_ESSENCIAIS"]): r"Stage_I_Drive\Ferramentas_Essenciais",
+    ("L_TEMP", COLLECTIONS["ACERVO_PESADO"]): r"Stage_F_Drive\Acervo_Pesado",
+    ("L_TEMP", COLLECTIONS["BACKUPS_ESPELHOS"]): r"Stage_F_Drive\Backups_Espelhos",
 }
 
 CRITICAL_PATH_HINTS = (

@@ -14,10 +14,11 @@ Outputs:
 Usage:
   python F:\\DocIntel\\post_extraction_gate.py
 """
-import sqlite3
 import os
 import random
 from datetime import datetime
+
+from docintel.db.connection import get_connection
 
 DB_PATH   = r"F:\DocIntel\output\inventario_global.db"
 OUT_DIR   = r"F:\DocIntel\output\reports"
@@ -32,10 +33,7 @@ SKIP_DIRS = {'node_modules', '.git', '.venv', '__pycache__', '.next',
 
 
 def conn():
-    c = sqlite3.connect(DB_PATH, timeout=60)
-    c.execute("PRAGMA journal_mode=WAL")
-    c.row_factory = sqlite3.Row
-    return c
+    return get_connection(DB_PATH, query_only=True, timeout=60)
 
 
 def q(c, sql, params=()):

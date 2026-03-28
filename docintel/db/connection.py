@@ -28,10 +28,19 @@ def get_connection(
 ) -> sqlite3.Connection:
     """Return a configured SQLite connection."""
     path = resolve_db_path(db_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path, timeout=timeout)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
+    if not query_only:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    connect_target = f"file:{path.as_posix()}?mode=ro" if query_only else str(path)
+    conn = sqlite3.connect(connect_target, timeout=timeout, uri=query_only)
+    conn.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
+    if not query_only:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                conn.close()
+                raise
+        conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=-64000")
     conn.execute("PRAGMA foreign_keys=ON")
     if query_only:

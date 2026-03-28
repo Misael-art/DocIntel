@@ -51,7 +51,7 @@ from config.settings import (
     PROJECT_MARKERS,
     SOURCE_DRIVES,
 )
-from db.connection import init_database
+from db.connection import get_connection, init_database
 from db.operations import log_audit
 from docintel.filesystem import choose_destination_candidate
 from docintel.validator.service import materialize_execution_plan, resolve_manifest_validation_status
@@ -66,6 +66,7 @@ EXECUTION_LOG_PATH = os.path.join(MANIFEST_DIR, "organization_execution_log.csv"
 
 MANIFEST_PATHS = {
     "GOOGLE_DRIVE": os.path.join(MANIFEST_DIR, "google_drive_manifest.csv"),
+    "L_TEMP": os.path.join(MANIFEST_DIR, "l_temp_staging_manifest.csv"),
     "C_DRAIN": os.path.join(MANIFEST_DIR, "drain_c_manifest.csv"),
     "I_DRIVE": os.path.join(MANIFEST_DIR, "i_drive_curated_manifest.csv"),
     "F_DRIVE": os.path.join(MANIFEST_DIR, "f_drive_cold_storage_manifest.csv"),
@@ -133,11 +134,7 @@ def validate_execution_manifest(manifest_path: str):
 
 
 def get_read_conn():
-    conn = sqlite3.connect(DB_PATH, timeout=60)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA query_only=ON")
-    conn.row_factory = sqlite3.Row
-    return conn
+    return get_connection(DB_PATH, query_only=True, timeout=60)
 
 
 def iter_db_rows(conn: sqlite3.Connection, limit: int = 0):
@@ -336,6 +333,15 @@ def build_destination_paths(destination_key: str, collection: str, record: dict)
     return logical_dest, physical_dest
 
 
+def can_use_temp_staging(capacity_by_dest: dict[str, int], size_bytes: int) -> bool:
+    config = DESTINATIONS.get("L_TEMP", {})
+    return bool(
+        config.get("allow_execute")
+        and config.get("root")
+        and capacity_by_dest.get("L_TEMP", 0) >= size_bytes
+    )
+
+
 def decide_record(record: dict, duplicate_count: int, capacity_by_dest: dict[str, int]) -> dict:
     path = record["source_path"].lower().replace("/", "\\")
     size_bytes = int(record["size_bytes"] or 0)
@@ -422,12 +428,33 @@ def decide_record(record: dict, duplicate_count: int, capacity_by_dest: dict[str
         risk = "ALTO"
         requires_review = 1
 
-    logical_dest, physical_dest = build_destination_paths(destination_key, collection, record)
     blockers = []
-    if destination_key == "GOOGLE_DRIVE" and not DESTINATIONS["GOOGLE_DRIVE"]["root"]:
-        blockers.append("GOOGLE_DRIVE_ROOT_UNCONFIGURED")
-        requires_review = 1
-        risk = "ALTO"
+
+    if action in {ACTION_COPY, ACTION_DRAIN_C} and destination_key == "GOOGLE_DRIVE" and not DESTINATIONS["GOOGLE_DRIVE"]["root"]:
+        if can_use_temp_staging(capacity_by_dest, size_bytes):
+            destination_key = "L_TEMP"
+            reason = (
+                f"{reason} Google Drive indisponivel; a copia sera staged temporariamente em L: "
+                "ate a promocao para o destino final."
+            )
+            risk = "MEDIO" if risk == "BAIXO" else risk
+        else:
+            blockers.append("GOOGLE_DRIVE_ROOT_UNCONFIGURED")
+            requires_review = 1
+            risk = "ALTO"
+
+    if action in {ACTION_COPY, ACTION_DRAIN_C} and destination_key in capacity_by_dest:
+        remaining = capacity_by_dest[destination_key]
+        if remaining < size_bytes and destination_key != "L_TEMP" and can_use_temp_staging(capacity_by_dest, size_bytes):
+            original_destination = destination_key
+            destination_key = "L_TEMP"
+            reason = (
+                f"{reason} Destino final {original_destination} sem capacidade ou indisponivel; "
+                "a copia sera staged temporariamente em L:."
+            )
+            risk = "MEDIO" if risk == "BAIXO" else risk
+
+    logical_dest, physical_dest = build_destination_paths(destination_key, collection, record)
 
     if action in {ACTION_COPY, ACTION_DRAIN_C} and destination_key in capacity_by_dest:
         remaining = capacity_by_dest[destination_key]
@@ -472,6 +499,8 @@ def decide_record(record: dict, duplicate_count: int, capacity_by_dest: dict[str
 
 
 def select_manifest_bucket(decision: dict) -> str:
+    if decision["destino_recomendado"] == "L_TEMP":
+        return "L_TEMP"
     if decision["source_drive"] == "C:\\":
         return "C_DRAIN"
     if decision["destino_recomendado"] == "GOOGLE_DRIVE":
@@ -615,7 +644,9 @@ def execute_manifest(manifest_path: str, execution_log_path: str):
 
 def build_capacity_budgets() -> dict[str, int]:
     budgets = {}
-    for key in ("I_DRIVE", "F_DRIVE"):
+    for key in ("I_DRIVE", "F_DRIVE", "L_TEMP"):
+        if key not in DESTINATIONS:
+            continue
         config = DESTINATIONS[key]
         info = get_volume_info(config["root"])
         free = info["free"] if info["exists"] else 0
@@ -638,7 +669,9 @@ def write_summary(summary_path: str, stats: dict, volumes: dict, c_summary: dict
         "| Destino | Root | Livre (GB) | Reserva Minima (GB) | Situacao |",
         "|---------|------|------------|---------------------|----------|",
     ]
-    for key in ("GOOGLE_DRIVE", "I_DRIVE", "F_DRIVE"):
+    for key in ("GOOGLE_DRIVE", "L_TEMP", "I_DRIVE", "F_DRIVE"):
+        if key not in DESTINATIONS:
+            continue
         config = DESTINATIONS[key]
         info = volumes[key]
         reserve = config["min_free_bytes"] or 0
@@ -656,6 +689,7 @@ def write_summary(summary_path: str, stats: dict, volumes: dict, c_summary: dict
         "|---------|-------|",
         f"| Registros avaliados | {stats['total_rows']:,} |",
         f"| Google Drive | {stats['by_bucket']['GOOGLE_DRIVE']:,} |",
+        f"| Stage temporario em L: | {stats['by_bucket']['L_TEMP']:,} |",
         f"| Drenagem do C: | {stats['by_bucket']['C_DRAIN']:,} |",
         f"| Curadoria para I: | {stats['by_bucket']['I_DRIVE']:,} |",
         f"| Arquivo frio em F: | {stats['by_bucket']['F_DRIVE']:,} |",
@@ -694,6 +728,7 @@ def write_summary(summary_path: str, stats: dict, volumes: dict, c_summary: dict
         "## Guardrails",
         "",
         "- Google Drive recebe apenas material critico e pequeno.",
+        "- L: pode receber staging temporario somente quando o destino final estiver indisponivel ou sem capacidade.",
         "- C: e tratado como disco operacional e fonte de drenagem, nunca destino final.",
         "- I: recebe trabalho vivo e ferramentas essenciais.",
         "- F: recebe acervo pesado, espelhos e material frio.",
@@ -735,7 +770,11 @@ def build_plan(limit: int = 0, include_c_audit: bool = True):
     conn = get_read_conn()
     duplicate_map = build_duplicate_map(conn)
     capacity_by_dest = build_capacity_budgets()
-    volumes = {key: get_volume_info(DESTINATIONS[key]["root"]) for key in ("GOOGLE_DRIVE", "I_DRIVE", "F_DRIVE")}
+    volumes = {
+        key: get_volume_info(DESTINATIONS[key]["root"])
+        for key in ("GOOGLE_DRIVE", "L_TEMP", "I_DRIVE", "F_DRIVE")
+        if key in DESTINATIONS
+    }
 
     writers = {}
     handles = {}
@@ -750,9 +789,7 @@ def build_plan(limit: int = 0, include_c_audit: bool = True):
         handles[key] = handle
         writers[key] = writer
 
-    write_conn = sqlite3.connect(DB_PATH, timeout=60)
-    write_conn.execute("PRAGMA journal_mode=WAL")
-    write_conn.execute("PRAGMA synchronous=NORMAL")
+    write_conn = get_connection(DB_PATH, timeout=60)
 
     stats = {
         "total_rows": 0,

@@ -65,7 +65,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ]
                 self.assertEqual(
                     versions,
-                    ["0001_baseline_schema", "0002_legacy_hardening"],
+                    [
+                        "0001_baseline_schema",
+                        "0002_legacy_hardening",
+                        "0003_monitor_query_indexes",
+                    ],
                 )
             finally:
                 conn.close()

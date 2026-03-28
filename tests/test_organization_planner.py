@@ -1,8 +1,14 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
-from organization_planner import decide_record, normalize_filename, validate_execution_manifest
+from organization_planner import (
+    decide_record,
+    normalize_filename,
+    select_manifest_bucket,
+    validate_execution_manifest,
+)
 
 
 class OrganizationPlannerTests(unittest.TestCase):
@@ -66,6 +72,31 @@ class OrganizationPlannerTests(unittest.TestCase):
         decision = decide_record(record, duplicate_count=0, capacity_by_dest={"I_DRIVE": 10**12, "F_DRIVE": 10**12})
         self.assertEqual(decision["acao_recomendada"], "DRAIN_C_BY_COPY")
         self.assertEqual(decision["destino_recomendado"], "I_DRIVE")
+
+    def test_project_falls_back_to_l_temp_when_i_drive_is_unavailable(self):
+        with patch.dict(
+            "organization_planner.DESTINATIONS",
+            {
+                "L_TEMP": {
+                    "label": "L:\\ Temp Staging",
+                    "root": r"L:\DocIntel_Temp_Staging",
+                    "logical_root": "L_TEMP://",
+                    "min_free_bytes": 0,
+                    "allow_execute": True,
+                }
+            },
+            clear=False,
+        ):
+            decision = decide_record(
+                self.make_record(),
+                duplicate_count=0,
+                capacity_by_dest={"I_DRIVE": 0, "F_DRIVE": 10**12, "L_TEMP": 10**12},
+            )
+
+        self.assertEqual(decision["destino_recomendado"], "L_TEMP")
+        self.assertIn("Stage_I_Drive", decision["destino_fisico"])
+        self.assertIn("temporariamente em L", decision["justificativa_curta"])
+        self.assertEqual(select_manifest_bucket(decision), "L_TEMP")
 
     def test_filename_normalization_standardizes_dates(self):
         self.assertEqual(normalize_filename("Relatorio 27-03-2026 FINAL.PDF"), "Relatorio 2026-03-27 FINAL.pdf")

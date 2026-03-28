@@ -426,9 +426,20 @@ def _legacy_hardening(conn: sqlite3.Connection) -> None:
     )
 
 
+def _monitor_query_indexes(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_files_phase_status ON files(fase_correspondente, status_indexacao);
+        CREATE INDEX IF NOT EXISTS idx_files_status_ext ON files(status_indexacao, extensao);
+        CREATE INDEX IF NOT EXISTS idx_files_status_observacoes ON files(status_indexacao, observacoes);
+        """
+    )
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("0001_baseline_schema", "Create baseline production schema.", _baseline_schema),
     Migration("0002_legacy_hardening", "Backfill legacy columns and audit fields.", _legacy_hardening),
+    Migration("0003_monitor_query_indexes", "Add composite indexes for read-heavy governance reports.", _monitor_query_indexes),
 )
 
 

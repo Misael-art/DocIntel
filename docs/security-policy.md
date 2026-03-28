@@ -7,6 +7,8 @@
 - Modo `apply` exige aprovação manual, validação concluída e manifest executável materializado.
 - `organization_planner.py --execute` consulta o último status persistido em `manifests` e bloqueia qualquer manifesto que não esteja `VALIDATED`.
 - O validator bloqueia por ausência de origem, ausência de destino, revisão humana pendente, colisão insegura e falta de capacidade no volume de destino.
+- Leituras operacionais (`monitor_extraction.py`, `post_extraction_gate.py` e leitores equivalentes) devem abrir o SQLite em modo read-only real, sem tentar alterar `journal_mode`.
+- O `L:` temporário só pode ser usado como staging copy-first e nunca como justificativa para mover/apagar a origem.
 - Auditoria aceita severidade, correlação e payload estruturado adicional.
 
 ## Regras permanentes

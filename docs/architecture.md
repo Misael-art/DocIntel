@@ -40,6 +40,7 @@ Esta entrega estabelece a base de produção da Fase 1:
    - `risk_assessments`
 4. Cada manifesto recebe um status explícito (`VALIDATED`, `BLOCKED`, `REVIEW_REQUIRED` ou `NO_EXECUTION_REQUIRED`).
 5. `organization_planner.py --execute` só aceita manifests cujo último status persistido seja `VALIDATED`.
+6. Quando `I:` ou outro destino final estiver indisponível, o planner pode desviar cópias para staging temporário em `L:` sem alterar a origem.
 
 ## Direção arquitetural das próximas fases
 

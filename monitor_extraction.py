@@ -7,9 +7,10 @@ Reads DB in read-only mode and generates:
 Safe to run IN PARALLEL with run_extraction.py - uses read-only WAL reads.
 Run: python F:\DocIntel\monitor_extraction.py
 """
-import sqlite3
 import os
 from datetime import datetime
+
+from docintel.db.connection import get_connection
 
 DB_PATH      = r"F:\DocIntel\output\inventario_global.db"
 STATUS_PATH  = r"F:\DocIntel\output\reports\status_execucao.md"
@@ -24,22 +25,19 @@ SKIP_REASON_EXPLANATION = {
 }
 
 def get_conn():
-    # Immutable read — WAL allows concurrent reads even with active writers
-    conn = sqlite3.connect(DB_PATH, timeout=60, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA query_only=ON")
-    conn.row_factory = sqlite3.Row
-    return conn
+    # True read-only open: never mutates journal mode while another process writes.
+    return get_connection(DB_PATH, query_only=True, timeout=60)
 
 
 def run():
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[MONITOR] Gerando relatórios de governança às {ts}...")
+    print(f"[MONITOR] Gerando relatórios de governança às {ts}...", flush=True)
 
     conn = get_conn()
     c = conn.cursor()
 
     # ── 1. STATUS POR STATUS_INDEXACAO ──────────────────────────────────────
+    print("[MONITOR] Consultando distribuição por status...", flush=True)
     c.execute("""
         SELECT status_indexacao, COUNT(*) as cnt, SUM(tamanho_bytes) as tb
         FROM files
@@ -59,6 +57,7 @@ def run():
     concluidos  = extraidos + hash_calc + excluidos + ausentes
 
     # ── 2. STATUS POR FASE ───────────────────────────────────────────────────
+    print("[MONITOR] Consultando cruzamento fase x status...", flush=True)
     c.execute("""
         SELECT fase_correspondente, status_indexacao, COUNT(*) as cnt
         FROM files
@@ -70,9 +69,10 @@ def run():
         fase = r['fase_correspondente'] or 'NULL'
         if fase not in fases:
             fases[fase] = {}
-        fases[fase][r['status_indexacao'] or 'NULL'] = r['cnt']
+            fases[fase][r['status_indexacao'] or 'NULL'] = r['cnt']
 
     # ── 3. DOCS COM TEXTO EXTRAÍDO POR EXTENSÃO ──────────────────────────────
+    print("[MONITOR] Consultando extensões extraídas...", flush=True)
     c.execute("""
         SELECT extensao, COUNT(*) as cnt
         FROM files
@@ -84,6 +84,7 @@ def run():
     ext_extraidos = c.fetchall()
 
     # ── 4. ERROS POR EXTENSÃO (AUSENTES) ────────────────────────────────────
+    print("[MONITOR] Consultando arquivos ausentes por extensão...", flush=True)
     c.execute("""
         SELECT extensao, COUNT(*) as cnt
         FROM files
@@ -95,6 +96,7 @@ def run():
     erros_ext = c.fetchall()
 
     # ── 5. EXCLUÍDOS POR PASTA (MOTIVO REAL) ────────────────────────────────
+    print("[MONITOR] Consultando exclusões por motivo...", flush=True)
     c.execute("""
         SELECT observacoes, COUNT(*) as cnt
         FROM files
@@ -106,6 +108,7 @@ def run():
     excl_motivos = c.fetchall()
 
     # ── 6. TAMANHO RESTANTE ──────────────────────────────────────────────────
+    print("[MONITOR] Calculando tamanho pendente em FASE_1+2...", flush=True)
     c.execute("""
         SELECT SUM(tamanho_bytes) FROM files
         WHERE (status_indexacao = 'PENDENTE' OR status_indexacao IS NULL)
@@ -264,11 +267,11 @@ Status: **PENDENTE** (será gerado ao término da Etapa 3)
     with open(RESUMO_PATH, 'w', encoding='utf-8') as f:
         f.write(resumo)
 
-    print(f"[MONITOR] ✅ Relatórios gerados:")
-    print(f"  {STATUS_PATH}")
-    print(f"  {RESUMO_PATH}")
-    print(f"\n[MONITOR] Resumo: {concluidos:,}/{total_files:,} concluídos ({pct:.1f}%)")
-    print(f"  EXTRAIDO: {extraidos:,} | HASH: {hash_calc:,} | EXCLUIDOS: {excluidos:,} | AUSENTES: {ausentes:,}")
+    print(f"[MONITOR] ✅ Relatórios gerados:", flush=True)
+    print(f"  {STATUS_PATH}", flush=True)
+    print(f"  {RESUMO_PATH}", flush=True)
+    print(f"\n[MONITOR] Resumo: {concluidos:,}/{total_files:,} concluídos ({pct:.1f}%)", flush=True)
+    print(f"  EXTRAIDO: {extraidos:,} | HASH: {hash_calc:,} | EXCLUIDOS: {excluidos:,} | AUSENTES: {ausentes:,}", flush=True)
 
 
 if __name__ == "__main__":
