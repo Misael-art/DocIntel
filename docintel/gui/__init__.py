@@ -1,0 +1,1 @@
+"""DocIntel desktop launcher GUI."""

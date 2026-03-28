@@ -249,6 +249,34 @@ Os manifests por destino sao os artefatos operacionais reais. O manifesto consol
 
 ## Fluxo recomendado de execucao
 
+## Launcher desktop sem comando
+
+Para iniciar o projeto sem digitar comandos, use:
+
+```powershell
+.\Iniciar_DocIntel_GUI.bat
+```
+
+Para validar o launcher sem abrir a janela definitivamente:
+
+```powershell
+python .\launch_docintel_gui.py --health-check
+```
+
+Esse launcher:
+
+- encontra o Python automaticamente;
+- prioriza `.venv\Scripts\python.exe` quando existir;
+- valida/migra o SQLite antes de abrir a interface;
+- instala `PySide6` mediante confirmacao se a dependencia estiver ausente;
+- abre uma GUI operacional segura com botoes para:
+  - atualizar status;
+  - rodar supervisao segura;
+  - gerar planejamento seguro;
+  - abrir dashboard, relatorios e README.
+
+A GUI atual e um **control center operacional real** para o estado atual do projeto. Ela nao substitui a futura interface explorer-like completa, mas ja permite usar o pipeline com seguranca sem depender de linha de comando.
+
 ### 1. Inicializar banco e inventariar
 
 ```powershell

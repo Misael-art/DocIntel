@@ -20,10 +20,19 @@ jobs:
       - name: Install package
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e .[dev]
+          python -m pip install -e .[dev,gui]
 
       - name: Run unit tests
         run: python -m unittest discover -s tests -p "test*.py" -v
 
       - name: Compile smoke check
         run: python -m compileall docintel db continuity_supervisor.py supervise_post_extraction.py organization_planner.py
+
+      - name: Launcher health check
+        run: python launch_docintel_gui.py --health-check
+
+      - name: GUI smoke check
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          python launch_docintel_gui.py --smoke-test
