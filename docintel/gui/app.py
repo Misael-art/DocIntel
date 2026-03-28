@@ -77,12 +77,16 @@ class DocIntelLauncherWindow(QMainWindow):
         self.repo_value = QLabel()
         self.python_value = QLabel()
         self.db_value = QLabel()
+        self.plan_value = QLabel()
+        self.validation_value = QLabel()
         self.git_value = QLabel()
         self.remote_value = QLabel()
         for label in (
             self.repo_value,
             self.python_value,
             self.db_value,
+            self.plan_value,
+            self.validation_value,
             self.git_value,
             self.remote_value,
         ):
@@ -91,6 +95,8 @@ class DocIntelLauncherWindow(QMainWindow):
         form.addRow("Repositorio", self.repo_value)
         form.addRow("Python", self.python_value)
         form.addRow("SQLite", self.db_value)
+        form.addRow("Ultimo plano", self.plan_value)
+        form.addRow("Validacao", self.validation_value)
         form.addRow("Git", self.git_value)
         form.addRow("Remote", self.remote_value)
 
@@ -102,6 +108,7 @@ class DocIntelLauncherWindow(QMainWindow):
             ("Atualizar Status", lambda: self.run_script("monitor_extraction.py")),
             ("Supervisao Segura", lambda: self.run_script("supervise_post_extraction.py")),
             ("Planejamento Seguro", lambda: self.run_script("organization_planner.py")),
+            ("Abrir Validacao", self.open_validation_report),
             ("Abrir Dashboard", self.open_dashboard),
             ("Abrir Relatorios", self.open_reports),
             ("Abrir README", self.open_readme),
@@ -148,10 +155,14 @@ class DocIntelLauncherWindow(QMainWindow):
         self.statusBar().showMessage("Contexto atualizado.", 5000)
 
     def _apply_context(self, context: RuntimeContext) -> None:
-        self.summary_label.setText(context.stage3_summary)
+        self.summary_label.setText(f"{context.stage3_summary}\n{context.latest_plan_summary}")
         self.repo_value.setText(str(context.repo_root))
         self.python_value.setText(context.python_executable)
         self.db_value.setText(str(context.db_path))
+        self.plan_value.setText(f"{context.latest_plan_key} [{context.latest_plan_status}]")
+        self.validation_value.setText(
+            str(context.latest_validation_report) if context.latest_validation_report else "Nao gerado"
+        )
         self.git_value.setText(f"{context.git_branch} @ {context.git_commit}")
         self.remote_value.setText(context.git_remote)
 
@@ -179,6 +190,16 @@ class DocIntelLauncherWindow(QMainWindow):
             self,
             "Dashboard indisponivel",
             "O dashboard ainda nao existe. Execute 'Atualizar Status' para gerar os artefatos.",
+        )
+
+    def open_validation_report(self) -> None:
+        if self.context.latest_validation_report and self.context.latest_validation_report.exists():
+            open_in_shell(self.context.latest_validation_report)
+            return
+        QMessageBox.information(
+            self,
+            "Relatorio indisponivel",
+            "Ainda nao existe relatorio de validacao materializado no SQLite atual.",
         )
 
     def open_reports(self) -> None:

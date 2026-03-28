@@ -26,6 +26,15 @@
 - `risk_assessments`: avaliação de risco por escopo.
 - `schema_migrations`: histórico de migração do banco.
 
+## Estado materializado do fluxo operacional
+
+- `organization_decisions` continua representando a decisão derivada do planner.
+- `manifests` registra cada CSV gerado com checksum, quantidade de linhas e status validado.
+- `execution_plans` representa a rodada materializada do dry-run ou futura execução.
+- `execution_steps` contém apenas etapas que realmente poderiam existir no motor, com `READY`, `BLOCKED` ou `SKIPPED`.
+- `validation_results` guarda cada verificação por escopo (`PLAN`, `MANIFEST`, `STEP`) e regra.
+- `risk_assessments` resume o risco agregado por manifesto para inspeção e auditoria.
+
 ## Regras de evolução
 
 - Toda mudança de schema deve entrar como migração explícita em `docintel/db/migrations.py`.

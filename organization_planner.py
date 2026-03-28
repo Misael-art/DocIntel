@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import os
 import re
 import shutil
@@ -54,6 +53,8 @@ from config.settings import (
 )
 from db.connection import init_database
 from db.operations import log_audit
+from docintel.filesystem import choose_destination_candidate
+from docintel.validator.service import materialize_execution_plan, resolve_manifest_validation_status
 from storage_audit import get_volume_info, iter_c_user_files, summarize_c_user_targets
 
 
@@ -482,33 +483,6 @@ def select_manifest_bucket(decision: dict) -> str:
     return "REVIEW"
 
 
-def file_hash(path: str) -> str:
-    sha = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            sha.update(chunk)
-    return sha.hexdigest()
-
-
-def choose_destination(dest_path: str, source_hash: str, source_path: str) -> tuple[str, str]:
-    if not os.path.exists(dest_path):
-        return dest_path, "NEW_DESTINATION"
-    if source_hash:
-        try:
-            if file_hash(dest_path) == source_hash:
-                return dest_path, "ALREADY_PRESENT_SAME_HASH"
-        except OSError:
-            pass
-    base, ext = os.path.splitext(dest_path)
-    suffix = sanitize_segment(source_hash[:8] if source_hash else os.path.basename(source_path))
-    candidate = f"{base}__dup_{suffix}{ext}"
-    counter = 1
-    while os.path.exists(candidate):
-        candidate = f"{base}__dup_{suffix}_{counter}{ext}"
-        counter += 1
-    return candidate, "COLLISION_RENAMED"
-
-
 def persist_decision_batch(conn: sqlite3.Connection, batch: list[dict]):
     """Persist organization decisions with a single long-lived connection."""
     if not batch:
@@ -583,7 +557,14 @@ def write_manifest_index(stats: dict):
 
 
 def execute_manifest(manifest_path: str, execution_log_path: str):
+    manifest_path = os.path.abspath(manifest_path)
     validate_execution_manifest(manifest_path)
+    validation_status = resolve_manifest_validation_status(DB_PATH, manifest_path)
+    if validation_status != "VALIDATED":
+        raise SystemExit(
+            "[ORG] Execucao bloqueada: manifesto sem validacao executavel. "
+            f"Status atual: {validation_status or 'DESCONHECIDO'}"
+        )
     os.makedirs(os.path.dirname(execution_log_path), exist_ok=True)
     processed = copied = skipped = blocked = 0
     with open(manifest_path, newline="", encoding="utf-8") as csvfile, \
@@ -614,7 +595,7 @@ def execute_manifest(manifest_path: str, execution_log_path: str):
                 writer.writerow({"file_id": row["file_id"], "source_path": src, "destination_path": dest, "result": "SOURCE_MISSING", "details": "Arquivo de origem nao encontrado no momento da copia."})
                 blocked += 1
                 continue
-            chosen_dest, reason = choose_destination(dest, source_hash, src)
+            chosen_dest, reason = choose_destination_candidate(dest, source_hash, src)
             os.makedirs(os.path.dirname(chosen_dest), exist_ok=True)
             if reason == "ALREADY_PRESENT_SAME_HASH":
                 writer.writerow({"file_id": row["file_id"], "source_path": src, "destination_path": chosen_dest, "result": reason, "details": "Hash identico ja presente no destino."})
@@ -850,9 +831,33 @@ def build_plan(limit: int = 0, include_c_audit: bool = True):
     write_summary(SUMMARY_PATH, stats, volumes, c_summary)
     write_risks_report(TOP_RISKS_PATH, stats)
     write_manifest_index(stats)
+    materialized = materialize_execution_plan(
+        db_path=DB_PATH,
+        manifest_paths=MANIFEST_PATHS,
+        summary_path=SUMMARY_PATH,
+        top_risks_path=TOP_RISKS_PATH,
+        stats=stats,
+        policy_version=POLICY_VERSION,
+    )
     log_audit("ORGANIZATION", "CURATION_PLAN_GENERATED", MANIFEST_DIR, "CONCLUIDO",
               f"{stats['total_rows']:,} registros avaliados; policy={POLICY_VERSION}")
+    log_audit(
+        "VALIDATOR",
+        "EXECUTION_PLAN_MATERIALIZED",
+        materialized.plan_key,
+        str(materialized.plan_status),
+        f"{materialized.materialized_steps:,} etapas materializadas",
+        details_json={
+            "report_path": materialized.report_path,
+            "blocked_steps": materialized.blocked_steps,
+            "ready_steps": materialized.ready_steps,
+            "validation_records": materialized.validation_records,
+        },
+    )
     return {
+        "plan_key": materialized.plan_key,
+        "plan_status": str(materialized.plan_status),
+        "validation_report": materialized.report_path,
         "summary_path": SUMMARY_PATH,
         "combined_manifest": COMBINED_MANIFEST_PATH,
         "manifest_paths": MANIFEST_PATHS,
@@ -867,7 +872,10 @@ def main():
         execute_manifest(args.manifest, args.execution_log)
         return
     result = build_plan(limit=args.limit, include_c_audit=not args.skip_c_audit)
+    print(f"[ORG] Plan key: {result['plan_key']}")
+    print(f"[ORG] Plan status: {result['plan_status']}")
     print(f"[ORG] Summary report: {result['summary_path']}")
+    print(f"[ORG] Validation report: {result['validation_report']}")
     print(f"[ORG] Top risks: {result['top_risks_path']}")
     print(f"[ORG] Combined manifest: {result['combined_manifest']}")
     for name, path in result["manifest_paths"].items():

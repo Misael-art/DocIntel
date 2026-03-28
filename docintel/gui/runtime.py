@@ -7,6 +7,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,6 +28,10 @@ class RuntimeContext:
     git_commit: str
     git_remote: str
     stage3_summary: str
+    latest_plan_key: str
+    latest_plan_status: str
+    latest_plan_summary: str
+    latest_validation_report: Path | None
 
 
 def repo_root() -> Path:
@@ -103,10 +108,63 @@ def parse_stage3_summary(status_path: Path | None = None) -> str:
     return "Status da Etapa 3 presente, mas sem resumo interpretavel."
 
 
+def latest_plan_context(db_path: Path) -> tuple[str, str, str, Path | None]:
+    """Read a short summary for the latest materialized execution plan."""
+    if not db_path.exists():
+        return ("nenhum", "SEM_PLANO", "Nenhum plano materializado ainda.", None)
+
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                """
+                SELECT plan_key, status, summary
+                FROM execution_plans
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return ("indisponivel", "ERRO", "Nao foi possivel ler o ultimo plano materializado.", None)
+
+    if row is None:
+        return ("nenhum", "SEM_PLANO", "Nenhum plano materializado ainda.", None)
+
+    report_path: Path | None = None
+    ready_steps = blocked_steps = skipped_steps = None
+    raw_summary = row["summary"] or ""
+    if raw_summary:
+        try:
+            payload = json.loads(raw_summary)
+        except json.JSONDecodeError:
+            payload = {}
+        report_value = payload.get("report_path")
+        if report_value:
+            report_path = Path(report_value)
+        ready_steps = payload.get("ready_steps")
+        blocked_steps = payload.get("blocked_steps")
+        skipped_steps = payload.get("skipped_steps")
+
+    status = row["status"]
+    key = row["plan_key"]
+    if ready_steps is not None and blocked_steps is not None and skipped_steps is not None:
+        summary = (
+            f"Ultimo plano {key}: {status} "
+            f"(prontas={ready_steps}, bloqueadas={blocked_steps}, puladas={skipped_steps})."
+        )
+    else:
+        summary = f"Ultimo plano {key}: {status}."
+    return (key, status, summary, report_path)
+
+
 def collect_runtime_context() -> RuntimeContext:
     """Collect the current launcher context for GUI rendering."""
     root = repo_root()
     db_path = ensure_runtime_ready()
+    latest_plan_key, latest_plan_status, latest_plan_summary, latest_validation_report = latest_plan_context(db_path)
     return RuntimeContext(
         repo_root=root,
         python_executable=sys.executable,
@@ -118,6 +176,10 @@ def collect_runtime_context() -> RuntimeContext:
         git_commit=_git_output("rev-parse", "--short", "HEAD") or "desconhecido",
         git_remote=_git_output("config", "--get", "remote.origin.url") or "desconhecido",
         stage3_summary=parse_stage3_summary(),
+        latest_plan_key=latest_plan_key,
+        latest_plan_status=latest_plan_status,
+        latest_plan_summary=latest_plan_summary,
+        latest_validation_report=latest_validation_report,
     )
 
 
